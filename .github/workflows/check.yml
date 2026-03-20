@@ -1,0 +1,320 @@
+name: Проверка лабораторной работы
+
+on:
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  check-structure:
+    name: 📁 Проверка структуры файлов
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout репозитория
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Определить изменённые папки лабораторных
+        id: detect
+        run: |
+          # Найти изменённые файлы в labN/variants/variantXX/
+          CHANGED=$(git diff --name-only origin/main...HEAD | grep -E '^lab[1-6]/variants/variant[0-9]+/' || true)
+          echo "changed_files<<EOF" >> $GITHUB_OUTPUT
+          echo "$CHANGED" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+          # Определить номер лабораторной и вариант
+          LAB=$(echo "$CHANGED" | grep -oP 'lab\d' | head -1 || true)
+          VARIANT=$(echo "$CHANGED" | grep -oP 'variant\d+' | head -1 || true)
+          echo "lab=$LAB" >> $GITHUB_OUTPUT
+          echo "variant=$VARIANT" >> $GITHUB_OUTPUT
+          echo "Найдена: $LAB / $VARIANT"
+
+      - name: Проверить наличие обязательных файлов
+        run: |
+          LAB="${{ steps.detect.outputs.lab }}"
+          VARIANT="${{ steps.detect.outputs.variant }}"
+
+          if [ -z "$LAB" ] || [ -z "$VARIANT" ]; then
+            echo "⚠️ Не найдено изменений в папках labN/variants/variantXX/"
+            echo "Убедитесь, что ваши файлы находятся в правильной папке."
+            exit 1
+          fi
+
+          DIR="$LAB/variants/$VARIANT"
+          echo "Проверяю папку: $DIR"
+
+          # Проверка solution.py
+          if [ ! -f "$DIR/solution.py" ]; then
+            echo "❌ Файл solution.py не найден в $DIR"
+            exit 1
+          fi
+          echo "✅ solution.py найден"
+
+          # Проверка report.md
+          if [ ! -f "$DIR/report.md" ]; then
+            echo "❌ Файл report.md не найден в $DIR"
+            exit 1
+          fi
+          echo "✅ report.md найден"
+
+          # Проверить что report.md не пустой
+          WORDS=$(wc -w < "$DIR/report.md")
+          if [ "$WORDS" -lt 30 ]; then
+            echo "❌ report.md слишком короткий ($WORDS слов). Минимум 30 слов."
+            exit 1
+          fi
+          echo "✅ report.md содержит $WORDS слов"
+
+  run-solution:
+    name: 🐍 Запуск программы
+    runs-on: ubuntu-latest
+    needs: check-structure
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Установить Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Определить лабораторную и вариант
+        id: detect
+        run: |
+          CHANGED=$(git diff --name-only origin/main...HEAD | grep -E '^lab[1-6]/variants/variant[0-9]+/' || true)
+          LAB=$(echo "$CHANGED" | grep -oP 'lab\d' | head -1 || true)
+          VARIANT=$(echo "$CHANGED" | grep -oP 'variant\d+' | head -1 || true)
+          echo "lab=$LAB" >> $GITHUB_OUTPUT
+          echo "variant=$VARIANT" >> $GITHUB_OUTPUT
+
+      - name: Подготовить тестовый файл
+        run: |
+          # Создать тестовый входной файл
+          cat > /tmp/test_input.txt << 'TESTEOF'
+          Информационная система — это взаимосвязанная совокупность средств,
+          методов и персонала, используемых для хранения, обработки и выдачи
+          информации в интересах достижения поставленной цели.
+          Современные информационные технологии играют ключевую роль во всех
+          сферах человеческой деятельности. Обработка и передача информации
+          являются основой цифровой экономики.
+          TESTEOF
+          echo "Тестовый файл создан: $(wc -c < /tmp/test_input.txt) байт"
+
+      - name: Запустить solution.py (лаб 1)
+        if: steps.detect.outputs.lab == 'lab1'
+        run: |
+          LAB="${{ steps.detect.outputs.lab }}"
+          VARIANT="${{ steps.detect.outputs.variant }}"
+          cd "$LAB/variants/$VARIANT"
+
+          echo "=== Запуск программы ==="
+          timeout 30 python solution.py /tmp/test_input.txt
+          EXIT_CODE=$?
+
+          if [ $EXIT_CODE -eq 0 ]; then
+            echo "✅ Программа завершилась успешно"
+          else
+            echo "❌ Программа завершилась с ошибкой (код $EXIT_CODE)"
+            exit 1
+          fi
+
+      - name: Запустить solution.py (лаб 2)
+        if: steps.detect.outputs.lab == 'lab2'
+        run: |
+          LAB="${{ steps.detect.outputs.lab }}"
+          VARIANT="${{ steps.detect.outputs.variant }}"
+          cd "$LAB/variants/$VARIANT"
+
+          echo "=== Запуск программы ==="
+          timeout 30 python solution.py /tmp/test_input.txt
+          EXIT_CODE=$?
+
+          if [ $EXIT_CODE -eq 0 ]; then
+            echo "✅ Программа завершилась успешно"
+          else
+            echo "❌ Программа завершилась с ошибкой (код $EXIT_CODE)"
+            exit 1
+          fi
+
+      - name: Запустить solution.py (лаб 3)
+        if: steps.detect.outputs.lab == 'lab3'
+        run: |
+          LAB="${{ steps.detect.outputs.lab }}"
+          VARIANT="${{ steps.detect.outputs.variant }}"
+          cd "$LAB/variants/$VARIANT"
+
+          echo "=== Тест сжатия ==="
+          timeout 30 python solution.py compress /tmp/test_input.txt /tmp/output.arc
+          if [ $? -ne 0 ]; then echo "❌ Ошибка при сжатии"; exit 1; fi
+          echo "✅ Сжатие прошло успешно"
+
+          echo "=== Тест распаковки ==="
+          timeout 30 python solution.py decompress /tmp/output.arc /tmp/restored.txt
+          if [ $? -ne 0 ]; then echo "❌ Ошибка при распаковке"; exit 1; fi
+          echo "✅ Распаковка прошла успешно"
+
+          echo "=== Проверка целостности ==="
+          if diff /tmp/test_input.txt /tmp/restored.txt > /dev/null 2>&1; then
+            echo "✅ Файлы совпадают — сжатие без потерь!"
+          else
+            echo "❌ Восстановленный файл отличается от оригинала!"
+            exit 1
+          fi
+
+      - name: Запустить solution.py (лаб 4)
+        if: steps.detect.outputs.lab == 'lab4'
+        run: |
+          LAB="${{ steps.detect.outputs.lab }}"
+          VARIANT="${{ steps.detect.outputs.variant }}"
+          cd "$LAB/variants/$VARIANT"
+
+          echo "=== Тест кодирования ==="
+          timeout 30 python solution.py encode "1011"
+          if [ $? -ne 0 ]; then echo "❌ Ошибка кодирования"; exit 1; fi
+          echo "✅ Кодирование успешно"
+
+          echo "=== Тест декодирования ==="
+          timeout 30 python solution.py decode "1011010"
+          EXIT_CODE=$?
+          if [ $EXIT_CODE -eq 0 ]; then
+            echo "✅ Декодирование успешно"
+          else
+            echo "⚠️ Декодирование завершилось с кодом $EXIT_CODE"
+          fi
+
+      - name: Запустить solution.py (лаб 5)
+        if: steps.detect.outputs.lab == 'lab5'
+        run: |
+          LAB="${{ steps.detect.outputs.lab }}"
+          VARIANT="${{ steps.detect.outputs.variant }}"
+          cd "$LAB/variants/$VARIANT"
+
+          echo "=== Тест шифрования ==="
+          timeout 30 python solution.py encrypt /tmp/test_input.txt /tmp/encrypted.txt SECRET
+          if [ $? -ne 0 ]; then echo "❌ Ошибка шифрования"; exit 1; fi
+          echo "✅ Шифрование успешно"
+
+          echo "=== Тест дешифрования ==="
+          timeout 30 python solution.py decrypt /tmp/encrypted.txt /tmp/decrypted.txt SECRET
+          if [ $? -ne 0 ]; then echo "❌ Ошибка дешифрования"; exit 1; fi
+          echo "✅ Дешифрование успешно"
+
+          echo "=== Проверка корректности ==="
+          if diff /tmp/test_input.txt /tmp/decrypted.txt > /dev/null 2>&1; then
+            echo "✅ Дешифрованный текст совпадает с оригиналом!"
+          else
+            echo "❌ Дешифрованный текст НЕ совпадает с оригиналом!"
+            exit 1
+          fi
+
+      - name: Запустить solution.py (лаб 6)
+        if: steps.detect.outputs.lab == 'lab6'
+        run: |
+          LAB="${{ steps.detect.outputs.lab }}"
+          VARIANT="${{ steps.detect.outputs.variant }}"
+          cd "$LAB/variants/$VARIANT"
+
+          # Создать тестовый зашифрованный файл (Цезарь, сдвиг 3)
+          python3 -c "
+          text = open('/tmp/test_input.txt').read()
+          enc = ''.join(chr((ord(c)-ord('a')+3)%26+ord('a')) if c.islower()
+                        else chr((ord(c)-ord('A')+3)%26+ord('A')) if c.isupper()
+                        else c for c in text)
+          open('/tmp/sample_encrypted.txt','w').write(enc)
+          print('Тестовый зашифрованный файл создан')
+          "
+
+          echo "=== Тест дешифровки ==="
+          timeout 60 python solution.py /tmp/sample_encrypted.txt
+          EXIT_CODE=$?
+          if [ $EXIT_CODE -eq 0 ]; then
+            echo "✅ Программа дешифровки завершилась успешно"
+          else
+            echo "❌ Программа завершилась с ошибкой (код $EXIT_CODE)"
+            exit 1
+          fi
+
+  syntax-check:
+    name: 🔍 Проверка синтаксиса Python
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Определить изменённые .py файлы
+        id: detect
+        run: |
+          CHANGED=$(git diff --name-only origin/main...HEAD | grep '\.py$' || true)
+          echo "py_files<<EOF" >> $GITHUB_OUTPUT
+          echo "$CHANGED" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      - name: Проверить синтаксис
+        run: |
+          FILES="${{ steps.detect.outputs.py_files }}"
+          if [ -z "$FILES" ]; then
+            echo "Нет изменённых .py файлов"
+            exit 0
+          fi
+
+          ERRORS=0
+          while IFS= read -r f; do
+            if [ -n "$f" ] && [ -f "$f" ]; then
+              python -m py_compile "$f" 2>&1
+              if [ $? -eq 0 ]; then
+                echo "✅ $f — синтаксис OK"
+              else
+                echo "❌ $f — синтаксическая ошибка!"
+                ERRORS=$((ERRORS+1))
+              fi
+            fi
+          done <<< "$FILES"
+
+          if [ $ERRORS -gt 0 ]; then
+            echo ""
+            echo "❌ Найдено ошибок: $ERRORS"
+            exit 1
+          fi
+          echo ""
+          echo "✅ Все файлы прошли проверку синтаксиса"
+
+  summary:
+    name: 📊 Итог
+    runs-on: ubuntu-latest
+    needs: [check-structure, run-solution, syntax-check]
+    if: always()
+
+    steps:
+      - name: Вывести итог
+        run: |
+          STRUCT="${{ needs.check-structure.result }}"
+          RUN="${{ needs.run-solution.result }}"
+          SYNTAX="${{ needs.syntax-check.result }}"
+
+          echo "==============================="
+          echo "  РЕЗУЛЬТАТЫ ПРОВЕРКИ"
+          echo "==============================="
+          [ "$STRUCT"  = "success" ] && echo "✅ Структура файлов" || echo "❌ Структура файлов"
+          [ "$SYNTAX"  = "success" ] && echo "✅ Синтаксис Python" || echo "❌ Синтаксис Python"
+          [ "$RUN"     = "success" ] && echo "✅ Запуск программы" || echo "❌ Запуск программы"
+          echo "==============================="
+
+          if [ "$STRUCT" = "success" ] && [ "$SYNTAX" = "success" ] && [ "$RUN" = "success" ]; then
+            echo ""
+            echo "🎉 Все проверки пройдены!"
+            echo "Можно записываться на защиту к преподавателю."
+          else
+            echo ""
+            echo "⚠️ Есть ошибки. Исправьте и повторно отправьте PR."
+            exit 1
+          fi
